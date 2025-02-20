@@ -1,11 +1,4 @@
-/*
- * @Author: ELEGOO
- * @Date: 2019-10-22 11:59:09
- * @LastEditTime: 2021-01-05 09:30:14
- * @LastEditors: Changhua
- * @Description: Smart Robot Car V4.0
- * @FilePath: 
- */
+
 #include <avr/wdt.h>
 //#include <hardwareSerial.h>
 #include <stdio.h>
@@ -68,6 +61,7 @@ enum SmartRobotCarMotionControl
 /*Mode Control List*/
 enum SmartRobotCarFunctionalModel
 {
+  CMD_Autonomous_mode,
   Standby_mode,           /*Standby Mode*/
   TraceBased_mode,        /*Line Tracking Mode*/
   ObstacleAvoidance_mode, /*Obstacle Avoidance Mode*/
@@ -122,6 +116,72 @@ void ApplicationFunctionSet::ApplicationFunctionSet_Init(void)
   // }
   Application_SmartRobotCarxxx0.Functional_Mode = Standby_mode;
 }
+void ApplicationFunctionSet::TurnCameraFull180() {
+    // Rotate the camera faster from 0° to 180°
+    for (int angle = 0; angle <= 180; angle += 30) {  // Increased step size
+        AppServo.DeviceDriverSet_Servo_control(angle);
+        delay(20);  // Reduced delay
+    }
+
+    delay(200);  // Reduced pause at 180°
+
+    // Rotate the camera back from 180° to 0°
+    for (int angle = 180; angle >= 0; angle -= 30) {  // Increased step size
+        AppServo.DeviceDriverSet_Servo_control(angle);
+        delay(20);  // Reduced delay
+    }
+}
+
+
+void ApplicationFunctionSet::ApplicationFunctionSet_SensorDataUpdate() {
+    // Update battery voltage
+    static unsigned long VoltageData_time = 0;
+    static int VoltageData_number = 1;
+    if (millis() - VoltageData_time > 10) {
+        VoltageData_time = millis();
+        VoltageData_V = AppVoltage.DeviceDriverSet_Voltage_getAnalogue();
+        if (VoltageData_V < VoltageDetection) {
+            VoltageData_number++;
+            if (VoltageData_number == 500) {
+                VoltageDetectionStatus = true;
+                VoltageData_number = 0;
+            }
+        } else {
+            VoltageDetectionStatus = false;
+        }
+    }
+
+    // Update ultrasonic sensor
+    AppULTRASONIC.DeviceDriverSet_ULTRASONIC_Get(&UltrasoundData_cm);
+    UltrasoundDetectionStatus = function_xxx(UltrasoundData_cm, 0, ObstacleDetection);
+
+    // Update IR tracking sensors
+    TrackingData_R = AppITR20001.DeviceDriverSet_ITR20001_getAnaloguexxx_R();
+    TrackingDetectionStatus_R = function_xxx(TrackingData_R, TrackingDetection_S, TrackingDetection_E);
+    
+    TrackingData_M = AppITR20001.DeviceDriverSet_ITR20001_getAnaloguexxx_M();
+    TrackingDetectionStatus_M = function_xxx(TrackingData_M, TrackingDetection_S, TrackingDetection_E);
+    
+    TrackingData_L = AppITR20001.DeviceDriverSet_ITR20001_getAnaloguexxx_L();
+    TrackingDetectionStatus_L = function_xxx(TrackingData_L, TrackingDetection_S, TrackingDetection_E);
+
+    // Check if car is lifted off the ground
+    ApplicationFunctionSet_SmartRobotCarLeaveTheGround();
+}
+
+void TurnCameraFull180() {
+    for (int angle = 0; angle <= 180; angle += 30) {
+        AppServo.DeviceDriverSet_Servo_control(angle);
+        delay(50);  // Adjust delay for smoothness
+    }
+    delay(500);  // Pause at 180 degrees
+    for (int angle = 180; angle >= 0; angle -= 30) {
+        AppServo.DeviceDriverSet_Servo_control(angle);
+        delay(50);
+    }
+}
+
+
 
 /*ITR20001 Check if the car leaves the ground*/
 static bool ApplicationFunctionSet_SmartRobotCarLeaveTheGround(void)
@@ -319,48 +379,59 @@ static void ApplicationFunctionSet_SmartRobotCarMotionControl(SmartRobotCarMotio
 /*
  Robot car update sensors' data:Partial update (selective update)
 */
-void ApplicationFunctionSet::ApplicationFunctionSet_SensorDataUpdate(void)
-{
 
-  // AppMotor.DeviceDriverSet_Motor_Test();
-  { /*Battery voltage status update*/
-    static unsigned long VoltageData_time = 0;
-    static int VoltageData_number = 1;
-    if (millis() - VoltageData_time > 10) //read and update the data per 10ms
-    {
-      VoltageData_time = millis();
-      VoltageData_V = AppVoltage.DeviceDriverSet_Voltage_getAnalogue();
-      if (VoltageData_V < VoltageDetection)
-      {
-        VoltageData_number++;
-        if (VoltageData_number == 500) //Continuity to judge the latest voltage value multiple 
-        {
-          VoltageDetectionStatus = true;
-          VoltageData_number = 0;
+
+/*
+ * Autonomous Obstacle Avoidance Mode
+ */
+void ApplicationFunctionSet::ApplicationFunctionSet_Autonomous(void) {
+    static bool initialized = true;
+    uint16_t distance;
+
+    if (Application_SmartRobotCarxxx0.Functional_Mode == CMD_Autonomous_mode) {
+        if (Car_LeaveTheGround == false) {
+            ApplicationFunctionSet_SmartRobotCarMotionControl(stop_it, 0);
+            return;
         }
-      }
-      else
-      {
-        VoltageDetectionStatus = false;
-      }
+
+        if (initialized) {
+            AppServo.DeviceDriverSet_Servo_control(90);  // Center Position
+            initialized = false;
+        }
+
+        // Rotate Camera to Scan Area
+        TurnCameraFull180();
+
+        // Get distance from ultrasonic sensor
+        AppULTRASONIC.DeviceDriverSet_ULTRASONIC_Get(&distance);
+
+        if (distance < 30) {
+            ApplicationFunctionSet_SmartRobotCarMotionControl(stop_it, 0);
+        } else {
+            ApplicationFunctionSet_SmartRobotCarMotionControl(Forward, 75);
+        }
+    } else {
+        initialized = true;
     }
-  }
+}
+
 
   // { /*value updation for the ultrasonic sensor：for the Obstacle Avoidance mode*/
   //   AppULTRASONIC.DeviceDriverSet_ULTRASONIC_Get(&UltrasoundData_cm /*out*/);
   //   UltrasoundDetectionStatus = function_xxx(UltrasoundData_cm, 0, ObstacleDetection);
   // }
 
-  { /*value updation for the IR sensors on the line tracking module：for the line tracking mode*/
-    TrackingData_R = AppITR20001.DeviceDriverSet_ITR20001_getAnaloguexxx_R();
-    TrackingDetectionStatus_R = function_xxx(TrackingData_R, TrackingDetection_S, TrackingDetection_E);
-    TrackingData_M = AppITR20001.DeviceDriverSet_ITR20001_getAnaloguexxx_M();
-    TrackingDetectionStatus_M = function_xxx(TrackingData_M, TrackingDetection_S, TrackingDetection_E);
-    TrackingData_L = AppITR20001.DeviceDriverSet_ITR20001_getAnaloguexxx_L();
-    TrackingDetectionStatus_L = function_xxx(TrackingData_L, TrackingDetection_S, TrackingDetection_E);
+  //{ /*value updation for the IR sensors on the line tracking module：for the line tracking mode*/
+   // TrackingData_R = AppITR20001.DeviceDriverSet_ITR20001_getAnaloguexxx_R();
+   // TrackingDetectionStatus_R = function_xxx(TrackingData_R, TrackingDetection_S, TrackingDetection_E);
+   // TrackingData_M = AppITR20001.DeviceDriverSet_ITR20001_getAnaloguexxx_M();
+   // TrackingDetectionStatus_M = function_xxx(TrackingData_M, TrackingDetection_S, TrackingDetection_E);
+    //TrackingData_L = AppITR20001.DeviceDriverSet_ITR20001_getAnaloguexxx_L();
+    //TrackingDetectionStatus_L = function_xxx(TrackingData_L, TrackingDetection_S, TrackingDetection_E);
     //ITR20001 Check if the car leaves the ground
-    ApplicationFunctionSet_SmartRobotCarLeaveTheGround();
-  }
+    //ApplicationFunctionSet_SmartRobotCarLeaveTheGround();
+  //}
+  //}
 
   // acquire timestamp
   // static unsigned long Test_time;
@@ -369,7 +440,8 @@ void ApplicationFunctionSet::ApplicationFunctionSet_SensorDataUpdate(void)
   //   Test_time = millis();
   //   //AppITR20001.DeviceDriverSet_ITR20001_Test();
   // }
-}
+
+
 /*
   Startup operation requirement：
 */
@@ -639,79 +711,53 @@ void ApplicationFunctionSet::ApplicationFunctionSet_Tracking(void)
 /*
   Obstacle Avoidance Mode
 */
-void ApplicationFunctionSet::ApplicationFunctionSet_Obstacle(void)
-{
-  static boolean first_is = true;
-  if (Application_SmartRobotCarxxx0.Functional_Mode == ObstacleAvoidance_mode)
-  {
-    uint8_t switc_ctrl = 0;
-    uint16_t get_Distance;
-    if (Car_LeaveTheGround == false)
-    {
-      ApplicationFunctionSet_SmartRobotCarMotionControl(stop_it, 0);
-      return;
-    }
-    if (first_is == true) //Enter the mode for the first time, and modulate the steering gear to 90 degrees
-    {
-      AppServo.DeviceDriverSet_Servo_control(90 /*Position_angle*/);
-      first_is = false;
-    }
+void ApplicationFunctionSet::ApplicationFunctionSet_Obstacle(void) {
+    static boolean first_is = true;
+    if (Application_SmartRobotCarxxx0.Functional_Mode == ObstacleAvoidance_mode) {
+        uint16_t get_Distance;
+        
+        // Ensure car is on the ground
+        if (Car_LeaveTheGround == false) {
+            ApplicationFunctionSet_SmartRobotCarMotionControl(stop_it, 0);
+            return;
+        }
 
-    AppULTRASONIC.DeviceDriverSet_ULTRASONIC_Get(&get_Distance /*out*/);
-    if (function_xxx(get_Distance, 0, 20))
-    {
-      ApplicationFunctionSet_SmartRobotCarMotionControl(stop_it, 0);
+        // Reset servo position on first entry
+        if (first_is == true) {
+            AppServo.DeviceDriverSet_Servo_control(90);
+            first_is = false;
+        }
 
-      for (uint8_t i = 1; i < 6; i += 2) //1、3、5 Omnidirectional detection of obstacle avoidance status
-      {
-        AppServo.DeviceDriverSet_Servo_control(30 * i /*Position_angle*/);
-        delay_xxx(1);
-        AppULTRASONIC.DeviceDriverSet_ULTRASONIC_Get(&get_Distance /*out*/);
+        // Get ultrasonic sensor reading
+        AppULTRASONIC.DeviceDriverSet_ULTRASONIC_Get(&get_Distance);
 
-        if (function_xxx(get_Distance, 0, 20))
-        {
-          ApplicationFunctionSet_SmartRobotCarMotionControl(stop_it, 0);
-          if (5 == i)
-          {
-            ApplicationFunctionSet_SmartRobotCarMotionControl(Backward, 150);
+        // If obstacle detected within 20cm, stop and perform full scan
+        if (function_xxx(get_Distance, 0, 20)) {
+            ApplicationFunctionSet_SmartRobotCarMotionControl(stop_it, 0);
+            
+            // Ensure camera always scans
+            TurnCameraFull180();
+
+            // Robot decides next action based on scan
+            ApplicationFunctionSet_SmartRobotCarMotionControl(Backward, 75);
             delay_xxx(500);
-            ApplicationFunctionSet_SmartRobotCarMotionControl(Right, 150);
-            delay_xxx(50);
-            first_is = true;
-            break;
-          }
+            ApplicationFunctionSet_SmartRobotCarMotionControl(Right, 75);
+
+            first_is = true; // Reset for next detection
+        } else {
+            // No obstacle detected, keep moving forward
+            ApplicationFunctionSet_SmartRobotCarMotionControl(Forward, 75);
         }
-        else
-        {
-          switc_ctrl = 0;
-          switch (i)
-          {
-          case 1:
-            ApplicationFunctionSet_SmartRobotCarMotionControl(Right, 150);
-            break;
-          case 3:
-            ApplicationFunctionSet_SmartRobotCarMotionControl(Forward, 150);
-            break;
-          case 5:
-            ApplicationFunctionSet_SmartRobotCarMotionControl(Left, 150);
-            break;
-          }
-          delay_xxx(50);
-          first_is = true;
-          break;
-        }
-      }
+    } else {
+        first_is = true;
     }
-    else //if (function_xxx(get_Distance, 20, 50))
-    {
-      ApplicationFunctionSet_SmartRobotCarMotionControl(Forward, 150);
-    }
-  }
-  else
-  {
-    first_is = true;
-  }
 }
+
+
+
+
+
+
 
 /*
   Following mode：
@@ -805,7 +851,7 @@ void ApplicationFunctionSet::ApplicationFunctionSet_Follow(void)
       }
       else if ((Position_Servo == 4))
       { /*Turn left*/
-        ApplicationFunctionSet_SmartRobotCarMotionControl(Left, 150);
+        ApplicationFunctionSet_SmartRobotCarMotionControl(Left, 75);
       }
     }
   }
@@ -1648,6 +1694,10 @@ void ApplicationFunctionSet::ApplicationFunctionSet_KeyCommand(void)
       /* code */
       Application_SmartRobotCarxxx0.Functional_Mode = Standby_mode;
       break;
+    case 5: // Assign a key for autonomous mode
+     Application_SmartRobotCarxxx0.Functional_Mode = CMD_Autonomous_mode;
+      break;
+
     default:
 
       break;
